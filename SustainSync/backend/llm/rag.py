@@ -811,6 +811,10 @@ def _summarize_usage_with_llm(label, context, fallback, goals=None, use_dashboar
     if not context:
         return fallback
 
+    # For goals analysis with actual goals provided, use per-goal prompting
+    if not use_dashboard_format and analysis_type == 'goals' and goals and len(goals) > 0:
+        return _summarize_usage_per_goal(label, context, fallback, goals)
+
     try:
         # Use recommendations model for sustainability insights
         summary = ask_llm(context, prompt, model_name='recommendations')
@@ -847,6 +851,181 @@ def _summarize_usage_with_llm(label, context, fallback, goals=None, use_dashboar
         return fallback
 
 
+def _summarize_usage_per_goal(label, context, fallback, goals):
+    """Generate recommendations for each goal individually and return list of goal objects.
+    
+    Args:
+        label: Utility type label ('total', 'Power', 'Gas', 'Water')
+        context: Data context for analysis
+        fallback: Fallback text if LLM fails
+        goals: List of sustainability goals dicts with 'title', 'description', 'target_date'
+    
+    Returns:
+        List of dicts with 'goal_id', 'goal_title', 'recommendations' (list of strings)
+    """
+    if not goals or len(goals) == 0:
+        return []
+    
+    label_name = 'Total portfolio' if label == 'total' else f"{label} usage"
+    goal_results = []
+    per_goal_target = 4
+    goal_results = []
+    per_goal_target = 4
+    
+    # Define goal type vocabularies with semantic clustering
+    goal_type_vocabulary = {
+        'water': {
+            'primary': ['water', 'h2o', 'aqua'],
+            'units': ['gallon', 'liter', 'litre', 'cubic meter', 'm3'],
+            'actions': ['irrigation', 'fixture', 'faucet', 'toilet', 'shower', 'leak', 'plumbing', 
+                       'cooling tower', 'evaporative', 'recycling', 'greywater', 'wastewater'],
+            'descriptors': ['usage', 'consumption', 'waste', 'conservation', 'efficiency', 'flow']
+        },
+        'electricity': {
+            'primary': ['electricity', 'electric', 'electrical', 'power', 'energy'],
+            'units': ['kwh', 'kilowatt', 'watt', 'megawatt', 'mwh'],
+            'actions': ['lighting', 'led', 'hvac', 'solar', 'photovoltaic', 'pv', 'renewable', 
+                       'motor', 'chiller', 'compressor', 'pump', 'fan', 'automation', 'controls',
+                       'inverter', 'battery', 'storage', 'grid'],
+            'descriptors': ['usage', 'consumption', 'demand', 'load', 'peak', 'efficiency', 'pue']
+        },
+        'gas': {
+            'primary': ['gas', 'natural gas', 'methane', 'propane', 'lng'],
+            'units': ['therm', 'cubic feet', 'ccf', 'mcf', 'btu'],
+            'actions': ['heating', 'boiler', 'furnace', 'burner', 'combustion', 'insulation',
+                       'heat recovery', 'condensing', 'heat pump', 'weatherization'],
+            'descriptors': ['usage', 'consumption', 'efficiency', 'heat', 'thermal']
+        },
+        'carbon': {
+            'primary': ['carbon', 'co2', 'co₂', 'ghg', 'greenhouse gas', 'emission'],
+            'units': ['ton', 'tonne', 'metric ton', 'kg', 'kilogram', 'pound'],
+            'actions': ['renewable', 'offset', 'sequestration', 'capture', 'electrification',
+                       'decarbonization', 'net zero', 'neutral', 'scope 1', 'scope 2', 'scope 3'],
+            'descriptors': ['footprint', 'impact', 'reduction', 'mitigation', 'intensity']
+        }
+    }
+    
+    def classify_goal_type(goal_text):
+        """Use TF-IDF-like scoring to classify goal type based on vocabulary matching."""
+        goal_text_lower = goal_text.lower()
+        scores = {}
+        
+        for gtype, vocab in goal_type_vocabulary.items():
+            score = 0
+            # Weight different vocabulary categories
+            for term in vocab['primary']:
+                if term in goal_text_lower:
+                    score += 10  # Primary terms heavily weighted
+            for term in vocab['units']:
+                if term in goal_text_lower:
+                    score += 8   # Units strongly indicate type
+            for term in vocab['actions']:
+                if term in goal_text_lower:
+                    score += 5   # Actions moderately weighted
+            for term in vocab['descriptors']:
+                if term in goal_text_lower:
+                    score += 2   # Descriptors lightly weighted
+            
+            scores[gtype] = score
+        
+        # Return type with highest score, or 'general' if all scores are 0
+        max_score = max(scores.values())
+        if max_score == 0:
+            return 'general'
+        return max(scores.items(), key=lambda x: x[1])[0]
+    
+    for goal in goals:
+        goal_id = goal.get('id')
+        goal_title = (goal.get('title') or '').strip()
+        goal_desc = (goal.get('description') or '').strip()
+        target_date = goal.get('target_date', '')
+        
+        # Build focused per-goal prompt
+        goal_context_section = (
+            f"\n\nSUSTAINABILITY GOAL:\n"
+            f"Title: {goal_title}\n"
+            f"Description: {goal_desc}\n"
+        )
+        if target_date:
+            goal_context_section += f"Target Date: {target_date}\n"
+        
+        per_goal_preamble = (
+            f"Generate exactly 4 actionable recommendations to achieve the goal below using {label_name} data from 2015–Nov 2025.\n\n"
+            
+            "FORMAT - Each recommendation must be ONE complete sentence with:\n"
+            "- Specific ACTION (what to do)\n"
+            "- TIMELINE (when to do it)\n"
+            "- QUANTIFIED IMPACT (measurable result using real numbers from the data)\n\n"
+            
+            "RULES:\n"
+            "1. Each bullet must be ONE sentence only\n"
+            "2. Start each line with a dash (-)\n"
+            "3. Use actual numbers from the data context\n"
+            "4. Recommend actions that DIRECTLY address the goal topic (e.g., water goal = water actions only)\n"
+            "5. NO explanations, NO multiple sentences, NO section headers, NO line breaks within bullets\n"
+            "6. Be specific and actionable (e.g., 'Install LED lighting in Building A' not 'Consider improving lighting')\n\n"
+            
+            "GOOD EXAMPLE:\n"
+            "- Replace 200 incandescent bulbs with LED fixtures in Building A by June 2026 to reduce electricity consumption by 48,000 kWh/year based on current 240,000 kWh/year usage.\n\n"
+            
+            "BAD EXAMPLES (DO NOT DO THIS):\n"
+            "- Action: Install LED lighting. Timeline: June 2026. Impact: 48,000 kWh reduction. (WRONG - not one sentence)\n"
+            "- Consider improving energy efficiency. (WRONG - not specific, no timeline, no quantified impact)\n"
+            "- Install efficient systems to help reduce consumption over time. (WRONG - vague, no numbers)\n\n"
+        )
+        
+        per_goal_prompt = (
+            f"{per_goal_preamble}"
+            f"GOAL:\n"
+            f"{goal_context_section}\n"
+            f"DATA:\n{context}\n\n"
+            f"Output exactly 4 recommendations as bulleted one-sentence actions:"
+        )
+        
+        try:
+            goal_resp = ask_llm(context, per_goal_prompt, model_name='recommendations')
+        except Exception:
+            goal_resp = None
+        
+        # If LLM unavailable, use fallback
+        goal_recommendations = []
+        if not goal_resp or goal_resp.strip().lower().startswith('(llm unavailable)'):
+            fb_lines = [ln.strip() for ln in fallback.split('\n') if ln.strip()]
+            for ln in fb_lines:
+                if ln.startswith('-') or ln.startswith('•') or ln.startswith('*'):
+                    goal_recommendations.append(ln.lstrip('-•* ').strip())
+                else:
+                    goal_recommendations.append(ln)
+        else:
+            # Extract bullet-like lines from the per-goal response
+            glines = goal_resp.split('\n')
+            gbullets = [
+                ln.strip() for ln in glines 
+                if ln.strip() and (ln.strip().startswith('-') or ln.strip().startswith('•') or ln.strip().startswith('*'))
+                and not any(header in ln.lower() for header in ['goals:', 'goal:', 'electricity goals', 'water goals', 'gas goals', 'carbon goals', 'action:', 'timeline:', 'impact:', 'quantified impact:'])
+            ]
+            
+            # If no explicit bullets found, try to extract sentences but limit to 4
+            if not gbullets:
+                import re
+                sents = [s.strip() for s in re.split(r'(?<=[.?!])\s+', goal_resp.strip()) if s.strip()]
+                # Filter out lines that look like headers or explanations
+                filtered_sents = [s for s in sents if not any(kw in s.lower() for kw in ['action:', 'timeline:', 'impact:', 'quantified impact:', 'i can', 'i cannot', 'fulfill this'])]
+                goal_recommendations = filtered_sents[:4]  # Take max 4
+            else:
+                # Add bullets for this goal (strip bullet markers), max 4
+                goal_recommendations = [b.lstrip('-•* ').strip() for b in gbullets[:4]]
+        
+        # Store this goal's recommendations
+        goal_results.append({
+            'goal_id': goal_id,
+            'goal_title': goal_title,
+            'recommendations': goal_recommendations
+        })
+    
+    return goal_results
+
+
 def forecast_trend_with_breakdown(bills_df, periods=12, include_summaries=False, goals=None, use_dashboard_format=False):
     """Forecast totals alongside per-utility breakdowns and AI summaries.
     
@@ -879,11 +1058,18 @@ def forecast_trend_with_breakdown(bills_df, periods=12, include_summaries=False,
             summaries['total'] = _summarize_usage_with_llm('total', context, fallback, goals=goals, use_dashboard_format=True)
         else:
             # Sustainability format: generate all three analysis types
-            summaries['total_goals'] = _summarize_usage_with_llm('total', context, fallback, goals=goals, use_dashboard_format=False, analysis_type='goals')
+            # Goals returns a list of per-goal objects with recommendations
+            if goals and len(goals) > 0:
+                summaries['total_goals'] = _summarize_usage_per_goal('total', context, fallback, goals)
+            else:
+                summaries['total_goals'] = []
             summaries['total_cobenefit'] = _summarize_usage_with_llm('total', context, fallback, goals=goals, use_dashboard_format=False, analysis_type='co-benefit')
             summaries['total_environmental'] = _summarize_usage_with_llm('total', context, fallback, goals=goals, use_dashboard_format=False, analysis_type='environmental')
-            # Keep 'total' for backward compatibility (use goals type)
-            summaries['total'] = summaries['total_goals']
+            # Keep 'total' for backward compatibility (use first goal's recs if available)
+            if summaries['total_goals']:
+                summaries['total'] = '\n'.join([f"- {rec}" for goal in summaries['total_goals'] for rec in goal['recommendations']])
+            else:
+                summaries['total'] = fallback
     else:
         summaries['total'] = fallback
 

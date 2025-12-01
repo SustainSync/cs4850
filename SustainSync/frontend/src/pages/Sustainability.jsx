@@ -34,11 +34,12 @@ function RecommendationsByType({ goals = [], forecastData = null }) {
   )
 
   // Extract the three different recommendation types from forecast data
-  const goalsRecommendations = forecastData.summaries.total_goals || forecastData.summaries.total || ''
+  // total_goals is now an array of {goal_id, goal_title, recommendations: []}
+  const goalsRecommendations = forecastData.summaries.total_goals || []
   const coBenefitRecommendations = forecastData.summaries.total_cobenefit || ''
   const environmentalRecommendations = forecastData.summaries.total_environmental || ''
 
-  // Parse function to convert text into lines
+  // Parse function to convert text into lines (for co-benefit and environmental)
   const parseLines = (text) => {
     if (!text) return []
     return text
@@ -57,43 +58,31 @@ function RecommendationsByType({ goals = [], forecastData = null }) {
       .filter(line => line.length > 10) // Filter out very short lines
   }
 
-  const goalsLines = parseLines(goalsRecommendations)
   const coBenefitLines = parseLines(coBenefitRecommendations)
   const environmentalLines = parseLines(environmentalRecommendations)
 
-  // Group goals by analysis type
-  const goalsByType = {
-    'goals': [],
-    'co-benefit': [],
-    'environmental': []
-  }
-
-  goals.forEach(goal => {
-    const type = goal.analysis_type || 'goals'
-    if (goalsByType[type]) {
-      goalsByType[type].push(goal)
-    }
-  })
-
-  // Analysis type metadata with their corresponding recommendation lines
+  // Analysis type metadata with their corresponding recommendation data
   const analysisTypes = {
     'goals': {
       icon: '📊',
       title: 'Goals-Focused Recommendations',
       description: 'Actionable recommendations aligned with your sustainability goals',
-      lines: goalsLines
+      data: goalsRecommendations, // Array of goal objects
+      isGoalBased: true
     },
     'co-benefit': {
       icon: '🔄',
       title: 'Co-Benefit Analysis',
       description: 'Cross-utility synergies and multi-domain impacts',
-      lines: coBenefitLines
+      data: coBenefitLines, // Array of strings
+      isGoalBased: false
     },
     'environmental': {
       icon: '🌱',
       title: 'Environmental Impact Analysis',
       description: 'Carbon emissions and ecological benefits',
-      lines: environmentalLines
+      data: environmentalLines, // Array of strings
+      isGoalBased: false
     }
   }
 
@@ -101,11 +90,12 @@ function RecommendationsByType({ goals = [], forecastData = null }) {
     <Stack spacing={2}>
       {/* Always show all three sections */}
       {Object.entries(analysisTypes).map(([type, meta]) => {
-        const typeGoals = goalsByType[type]
-        const sectionLines = meta.lines
+        const hasData = meta.isGoalBased 
+          ? (Array.isArray(meta.data) && meta.data.length > 0)
+          : (Array.isArray(meta.data) && meta.data.length > 0)
         
         return (
-          <Accordion key={type} defaultExpanded={sectionLines.length > 0}>
+          <Accordion key={type} defaultExpanded={hasData}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
                 <Typography variant="h6" sx={{ fontSize: '1.5rem' }}>
@@ -117,19 +107,19 @@ function RecommendationsByType({ goals = [], forecastData = null }) {
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
                     {meta.description}
-                    {typeGoals.length > 0 && ` • ${typeGoals.length} goal${typeGoals.length !== 1 ? 's' : ''}`}
+                    {meta.isGoalBased && meta.data.length > 0 && ` • ${meta.data.length} goal${meta.data.length !== 1 ? 's' : ''}`}
                   </Typography>
                 </Box>
               </Box>
             </AccordionSummary>
             <AccordionDetails>
-              {sectionLines.length > 0 ? (
-                typeGoals.length > 0 && type === 'goals' ? (
-                  // Goals type with actual goals: show 4 recs per goal
+              {hasData ? (
+                meta.isGoalBased ? (
+                  // Goals type: show recommendations per goal from backend structure
                   <Stack spacing={3}>
-                    {typeGoals.map((goal, idx) => (
+                    {meta.data.map((goalData) => (
                       <Paper 
-                        key={goal.id}
+                        key={goalData.goal_id}
                         elevation={0}
                         sx={{ 
                           p: 3, 
@@ -140,36 +130,39 @@ function RecommendationsByType({ goals = [], forecastData = null }) {
                         }}
                       >
                         <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1, color: 'primary.main' }}>
-                          {goal.title}
+                          {goalData.goal_title}
                         </Typography>
-                        {/* <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                          {goal.description}
-                        </Typography> */}
                         
                         <Stack spacing={1.5}>
-                          {sectionLines.slice(idx * 4, (idx + 1) * 4).map((line, lineIdx) => (
-                            <Box key={lineIdx} sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
-                              <Box 
-                                sx={{ 
-                                  width: 6, 
-                                  height: 6, 
-                                  borderRadius: '50%', 
-                                  backgroundColor: 'primary.main',
-                                  mt: 1,
-                                  flexShrink: 0
-                                }} 
-                              />
-                              <Typography variant="body2" sx={{ lineHeight: 1.7 }}>
-                                {line}
-                              </Typography>
-                            </Box>
-                          ))}
+                          {goalData.recommendations && goalData.recommendations.length > 0 ? (
+                            goalData.recommendations.map((rec, recIdx) => (
+                              <Box key={recIdx} sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
+                                <Box 
+                                  sx={{ 
+                                    width: 6, 
+                                    height: 6, 
+                                    borderRadius: '50%', 
+                                    backgroundColor: 'primary.main',
+                                    mt: 1,
+                                    flexShrink: 0
+                                  }} 
+                                />
+                                <Typography variant="body2" sx={{ lineHeight: 1.7 }}>
+                                  {rec}
+                                </Typography>
+                              </Box>
+                            ))
+                          ) : (
+                            <Alert severity="info">
+                              Recommendations for this goal are being generated...
+                            </Alert>
+                          )}
                         </Stack>
                       </Paper>
                     ))}
                   </Stack>
                 ) : (
-                  // Show all recommendations for this type
+                  // Non-goal types: show all recommendations in one section
                   <Paper 
                     elevation={0}
                     sx={{ 
@@ -179,7 +172,7 @@ function RecommendationsByType({ goals = [], forecastData = null }) {
                     }}
                   >
                     <Stack spacing={1.5}>
-                      {sectionLines.map((line, lineIdx) => (
+                      {meta.data.map((line, lineIdx) => (
                         <Box key={lineIdx} sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
                           <Box 
                             sx={{ 

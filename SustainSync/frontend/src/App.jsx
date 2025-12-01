@@ -67,6 +67,19 @@ function App() {
       goals: true
     }
   })
+    const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('darkMode')
+    return saved ? JSON.parse(saved) : false
+  })
+
+  // Update localStorage when dark mode changes
+  useEffect(() => {
+    localStorage.setItem('darkMode', JSON.stringify(darkMode))
+  }, [darkMode])
+
+  const toggleDarkMode = () => {
+    setDarkMode(prev => !prev)
+  }
 
   // Fetch dashboard forecast data (Key Trends, Cost Efficiency, Actionable Recommendations)
   const fetchDashboardForecast = async () => {
@@ -265,6 +278,24 @@ function App() {
                 </ListItem>
               ))}
             </List>
+          </Box>
+          <Divider sx={{ borderColor: 'rgba(148, 163, 184, 0.2)' }} />
+          {/* Dark Mode Toggle */}
+          <Box sx={{ px: 3, py: 2, display: 'flex', justifyContent: 'center' }}>
+            <Tooltip title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}>
+              <IconButton 
+                onClick={toggleDarkMode}
+                sx={{ 
+                  color: 'rgba(226, 232, 240, 0.8)',
+                  '&:hover': {
+                    bgcolor: 'rgba(15, 118, 110, 0.25)',
+                    color: '#d9f99d',
+                  }
+                }}
+              >
+                {darkMode ? <Brightness7 /> : <Brightness4 />}
+              </IconButton>
+            </Tooltip>
           </Box>
 
           <Divider sx={{ borderColor: 'rgba(148, 163, 184, 0.2)', my: 2 }} />
