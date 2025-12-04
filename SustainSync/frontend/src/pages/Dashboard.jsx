@@ -1108,7 +1108,7 @@ function Dashboard({ forecastData = null, recommendations = '', recommendationSo
             </Typography>
           </Box>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            Based on your consumption patterns and forecast data for {activeUtilityTab === 'all' ? 'all utilities' : activeUtilityTab}
+            Based on your consumption patterns and forecast data for all utilities.
           </Typography>
           
           {sharedLoading.forecast ? (
